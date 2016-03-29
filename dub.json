@@ -1,0 +1,10 @@
+{
+	"name": "bmfont",
+	"description": "Parser for font files generated using AngelCode Bitmap Font Generator",
+	"copyright": "Copyright © 2016, webfreak",
+	"license": "public domain",
+	"authors": [
+		"webfreak"
+	],
+	"dependencies": {}
+}
