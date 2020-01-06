@@ -1,13 +1,14 @@
 /// AngelCode BMFont parser & generator
 /// Copyright: Public Domain
 /// Author: Jan Jurzitza
-module bmfont;
+module bmfont; @safe:
 
-import std.traits : isSomeString;
-import std.ascii : isWhite, isAlpha;
+import std.array : Appender, appender;
+import std.ascii : isAlpha, isWhite;
 import std.bitmanip : littleEndianToNative, nativeToLittleEndian;
-import std.string : splitLines, stripLeft, strip;
 import std.conv : to;
+import std.string : representation, splitLines, strip, stripLeft;
+import std.traits : isSomeString;
 
 /// Information what each channel contains
 enum ChannelType : ubyte
@@ -168,7 +169,7 @@ struct Font
 	FontType type = FontType.none;
 
 	/// Creates a text representation of this font
-	string toString() const @safe
+	string toString() const @safe pure
 	{
 		import std.format;
 
@@ -208,48 +209,78 @@ struct Font
 	}
 
 	/// Creates a binary representation of this font
-	ubyte[] toBinary() const
+	ubyte[] toBinary() const @safe pure
 	{
 		import std.string : toStringz;
 
-		ubyte[] header = cast(ubyte[])[66, 77, 70, 3]; // BMF v3
-		ubyte[] binfo, bcommon, bpages, bchars, bkernings;
+		auto header = appender(cast(ubyte[])[66, 77, 70, 3]); // BMF v3
+		auto binfo = appender!(ubyte[]);
+		auto bcommon = appender!(ubyte[]);
+		auto bpages = appender!(ubyte[]);
+		auto bchars = appender!(ubyte[]);
+		auto bkernings = appender!(ubyte[]);
 
-		binfo = nativeToLittleEndian(info.fontSize) ~ info.bitField
-			~ info.charSet ~ nativeToLittleEndian(
-			info.stretchH) ~ info.aa ~ info.padding ~ info.spacing ~ info.outline;
-		binfo ~= cast(ubyte[]) info.fontName ~ 0u;
+		binfo.putRange(nativeToLittleEndian(info.fontSize));
+		binfo.put(info.bitField);
+		binfo.put(info.charSet);
+		binfo.putRange(nativeToLittleEndian(info.stretchH));
+		binfo.put(info.aa);
+		binfo.putRange(info.padding);
+		binfo.putRange(info.spacing);
+		binfo.put(info.outline);
+		binfo.putRange(info.fontName);
+		binfo.put(cast(ubyte) 0u);
 
-		bcommon = nativeToLittleEndian(common.lineHeight) ~ nativeToLittleEndian(common.base) ~ nativeToLittleEndian(
-			common.scaleW) ~ nativeToLittleEndian(common.scaleH) ~ nativeToLittleEndian(
-			common.pages) ~ common.bitField ~ common.alphaChnl ~ common.redChnl
-			~ common.greenChnl ~ common.blueChnl;
+		bcommon.putRange(nativeToLittleEndian(common.lineHeight));
+		bcommon.putRange(nativeToLittleEndian(common.base));
+		bcommon.putRange(nativeToLittleEndian(common.scaleW));
+		bcommon.putRange(nativeToLittleEndian(common.scaleH));
+		bcommon.putRange(nativeToLittleEndian(common.pages));
+		bcommon.put(common.bitField);
+		bcommon.put(common.alphaChnl);
+		bcommon.put(common.redChnl);
+		bcommon.put(common.greenChnl);
+		bcommon.put(common.blueChnl);
 
 		foreach (page; pages)
-			bpages ~= cast(ubyte[]) page ~ 0u;
+		{
+			bpages.putRange(page);
+			bpages.put(cast(ubyte) 0u);
+		}
 
 		foreach (c; chars)
-			bchars ~= nativeToLittleEndian(cast(uint) c.id) ~ nativeToLittleEndian(c.x) ~ nativeToLittleEndian(
-				c.y) ~ nativeToLittleEndian(c.width) ~ nativeToLittleEndian(c.height) ~ nativeToLittleEndian(
-				c.xoffset) ~ nativeToLittleEndian(c.yoffset) ~ nativeToLittleEndian(c.xadvance) ~ c.page
-				~ c.chnl;
+		{
+			bchars.putRange(nativeToLittleEndian(cast(uint) c.id));
+			bchars.putRange(nativeToLittleEndian(c.x));
+			bchars.putRange(nativeToLittleEndian(c.y));
+			bchars.putRange(nativeToLittleEndian(c.width));
+			bchars.putRange(nativeToLittleEndian(c.height));
+			bchars.putRange(nativeToLittleEndian(c.xoffset));
+			bchars.putRange(nativeToLittleEndian(c.yoffset));
+			bchars.putRange(nativeToLittleEndian(c.xadvance));
+			bchars.put(c.page);
+			bchars.put(c.chnl);
+		}
 
 		foreach (k; kernings)
-			bkernings ~= nativeToLittleEndian(cast(uint) k.first) ~ nativeToLittleEndian(
-				cast(uint) k.second) ~ nativeToLittleEndian(k.amount);
+		{
+			bkernings.putRange(nativeToLittleEndian(cast(uint) k.first));
+			bkernings.putRange(nativeToLittleEndian(cast(uint) k.second));
+			bkernings.putRange(nativeToLittleEndian(k.amount));
+		}
 
-		//dfmt off
-		return header
-			~ 1u ~ nativeToLittleEndian(cast(uint) binfo.length) ~ binfo
-			~ 2u ~ nativeToLittleEndian(cast(uint) bcommon.length) ~ bcommon
-			~ 3u ~ nativeToLittleEndian(cast(uint) bpages.length) ~ bpages
-			~ 4u ~ nativeToLittleEndian(cast(uint) bchars.length) ~ bchars
-			~ 5u ~ nativeToLittleEndian(cast(uint) bkernings.length) ~ bkernings;
-		//dfmt on
+		foreach (i, block; [binfo, bcommon, bpages, bchars, bkernings])
+		{
+			header.put(cast(ubyte)(i + 1));
+			header.putRange(nativeToLittleEndian(cast(uint) block.data.length));
+			header.put(block.data);
+		}
+
+		return header.data;
 	}
 
 	/// Returns: Information about the character passed as argument `c`. Empty Char struct with dchar.init as id if not found.
-	Char getChar(dchar id) nothrow
+	Char getChar(dchar id) const nothrow pure
 	{
 		foreach (c; chars)
 			if (c.id == id)
@@ -258,7 +289,7 @@ struct Font
 	}
 
 	/// Returns: the kerning between two characters. This is the additional distance the `second` character should be moved if the character before that is `first`
-	short getKerning(dchar first, dchar second)
+	short getKerning(dchar first, dchar second) const nothrow pure
 	{
 		foreach (kerning; kernings)
 			if (kerning.first == first && kerning.second == second)
@@ -267,11 +298,29 @@ struct Font
 	}
 }
 
+private void putRange(size_t n)(ref Appender!(ubyte[]) dst, ubyte[n] src) pure
+{
+	foreach (b; src)
+		dst.put(b);
+}
+
+private void putRange(ref Appender!(ubyte[]) dst, scope const(char)[] src) pure
+{
+	foreach (char c; src)
+		dst.put(cast(ubyte) c);
+}
+
 private string escape(in string s) pure nothrow @safe
 {
 	import std.string : replace;
 
 	return s.replace("\\", "\\\\").replace("\"", "\\\"");
+}
+
+private const(ubyte)[] getReadonlyBytes(T)(return scope T[] data) pure
+	if (T.sizeof == 1)
+{
+	return (() @trusted => cast(const(ubyte)[]) data)();
 }
 
 /// Gets thrown if a Font is in an invalid format
@@ -284,8 +333,8 @@ class InvalidFormatException : Exception
 }
 
 /// Parses a font and automatically figures out if its binary or text. Pass additional ParseFlags to skip sections.
-Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if (
-		isSomeString!T || is(T == ubyte[]))
+Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure
+		if (isSomeString!T || is(T == ubyte[]))
 {
 	Font font;
 
@@ -296,15 +345,15 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 	bool parseFontName = false;
 	size_t curPage = 0;
 	uint pageTotal = 0;
-	if (cast(ubyte[]) data[0 .. 3] == cast(ubyte[]) "BMF")
+	if (data[0 .. 3].getReadonlyBytes == "BMF".representation)
 	{
 		font.type = FontType.binary;
 		font.fileVersion = data[3];
 		if (font.fileVersion != 3)
 			throw new InvalidFormatException(
-				"Font version is not supported: " ~ font.fileVersion.to!string);
+					"Font version is not supported: " ~ font.fileVersion.to!string);
 	}
-	else if (cast(ubyte[]) data[0 .. 4] == cast(ubyte[]) "<?xm")
+	else if (data[0 .. 4].getReadonlyBytes == "<?xm".representation)
 		font.type = FontType.xml;
 	else
 		font.type = FontType.text;
@@ -471,7 +520,7 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 		}
 		break;
 	case FontType.text:
-		foreach (line; (cast(string) data).splitLines)
+		foreach (line; (cast(const(char)[]) data).splitLines)
 		{
 			string type;
 			foreach (c; line)
@@ -481,7 +530,7 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 				type ~= c;
 			}
 			line = line[type.length .. $].stripLeft;
-			string[2][] arguments = line.getArguments();
+			const(char)[][2][] arguments = line.getArguments();
 			ushort pageID = 0;
 			switch (type)
 			{
@@ -493,7 +542,7 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 					switch (argument[0])
 					{
 					case "face":
-						font.info.fontName = argument[1];
+						font.info.fontName = argument[1].idup;
 						break;
 					case "size":
 						font.info.fontSize = argument[1].to!short;
@@ -529,7 +578,7 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 						font.info.outline = cast(ubyte) argument[1].to!uint;
 						break;
 					default:
-						throw new InvalidFormatException("Unkown info argument: " ~ argument[0]);
+						throw new InvalidFormatException("Unkown info argument: " ~ argument[0].to!string);
 					}
 				}
 				break;
@@ -572,7 +621,7 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 						font.common.blueChnl = cast(ChannelType) argument[1].to!uint;
 						break;
 					default:
-						throw new InvalidFormatException("Unkown common argument: " ~ argument[0]);
+						throw new InvalidFormatException("Unkown common argument: " ~ argument[0].to!string);
 					}
 				}
 				break;
@@ -587,10 +636,10 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 						pageID = argument[1].to!ushort;
 						break;
 					case "file":
-						font.pages[pageID] = argument[1];
+						font.pages[pageID] = argument[1].idup;
 						break;
 					default:
-						throw new InvalidFormatException("Unkown page argument: " ~ argument[0]);
+						throw new InvalidFormatException("Unkown page argument: " ~ argument[0].to!string);
 					}
 				}
 				break;
@@ -667,7 +716,7 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 						kerning.amount = argument[1].to!short;
 						break;
 					default:
-						throw new InvalidFormatException("Unkown kerning argument: " ~ argument[0]);
+						throw new InvalidFormatException("Unkown kerning argument: " ~ argument[0].to!string);
 					}
 				}
 				font.kernings ~= kerning;
@@ -686,10 +735,10 @@ Font parseFnt(T)(auto ref in T data, ParseFlags flags = ParseFlags.none) pure if
 	return font;
 }
 
-private string[2][] getArguments(ref in string line) pure @safe
+private const(char)[][2][] getArguments(ref scope const(char)[] line) pure @safe
 {
-	string[2][] args;
-	string[2] currArg = "";
+	const(char)[][2][] args;
+	const(char)[][2] currArg = "";
 	bool inString = false;
 	bool escape = false;
 	bool isKey = true;
@@ -825,7 +874,7 @@ kerning first=97  second=98  amount=-1
 	assert(font.kernings[0].amount == -1);
 }
 
-unittest
+@system unittest
 {
 	import std.file;
 
@@ -838,7 +887,7 @@ unittest
 	assert(binary.type != text.type);
 }
 
-unittest
+@system unittest
 {
 	import std.file;
 
@@ -851,7 +900,7 @@ unittest
 	assert(binary.type != text.type);
 }
 
-unittest
+@system unittest
 {
 	import std.file;
 
